@@ -72,6 +72,7 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
+
 # Interface definitions
 class Layer:
     var: Dict[str, np.ndarray] = {}
@@ -95,6 +96,7 @@ class Loss:
     def backward(self) -> np.ndarray:
         raise NotImplementedError()
 
+
 # Implementation starts
 
 
@@ -102,7 +104,7 @@ class Tanh(Layer):
     def forward(self, x: np.ndarray) -> np.ndarray:
         ## Implement
 
-        # result =
+        result = (np.exp(x) - np.exp(-x)) / (np.exp(x) + np.exp(-x))
 
         ## End
         self.saved_variables = {
@@ -115,7 +117,7 @@ class Tanh(Layer):
 
         ## Implement
 
-        # d_x =
+        d_x = 1 - np.square(tanh_x)
 
         ## End
         assert d_x.shape == tanh_x.shape, "Input: grad shape differs: %s %s" % (d_x.shape, tanh_x.shape)
@@ -128,7 +130,7 @@ class Softmax(Layer):
     def forward(self, x: np.ndarray) -> np.ndarray:
         ## Implement
 
-        # result =
+        result = np.exp(x) / np.sum(np.exp(x), axis=1)[:, None]  # axis 1 sum along sample row
 
         ## End
         self.saved_variables = {
@@ -139,14 +141,26 @@ class Softmax(Layer):
     def backward(self, grad_in: np.ndarray) -> Layer.BackwardResult:
         softmax = self.saved_variables["result"]
 
+        gradient = np.zeros(softmax.shape)
         ## Implement
+        for i in range(grad_in.shape[0]):
+            transpose_row = np.atleast_2d(softmax[i]).T
+            diagonal = transpose_row * np.eye(softmax.shape[1])
+            temp_matrix = - (transpose_row * softmax[i])
+            jacobian = diagonal + temp_matrix
+            gradient[i] = grad_in[i] @ jacobian
 
-        # d_x =
+        d_x = gradient
+
+        # row = np.mean(grad_in*softmax, axis=1)[:, None]
+        # proper_d_x = softmax * (grad_in - (grad_in * softmax).sum(axis=1)[:, None])
 
         ## End
         assert d_x.shape == softmax.shape, "Input: grad shape differs: %s %s" % (d_x.shape, softmax.shape)
 
-        self.saved_variables = None
+        self.saved_variables = {
+            "d_x": d_x
+        }
         return Layer.BackwardResult({}, d_x)
 
 
@@ -164,10 +178,12 @@ class Linear(Layer):
         ## Implement
         ## Save your variables needed in backward pass to self.saved_variables.
 
-        # y =
+        y = x @ W + b
 
         self.saved_variables = {
-            "input": x
+            "input": x,
+            "y": y,
+            "W": W,
         }
 
         ## End
@@ -175,18 +191,28 @@ class Linear(Layer):
 
     def backward(self, grad_in: np.ndarray) -> Layer.BackwardResult:
         ## Implement
+        ## grad_in: gradient of current function
 
-        # dW =
-        # db =
+        x = self.saved_variables["input"]
+        W = self.saved_variables["W"]
 
-        # d_inputs =
+        dW = x.T @ W
+        db = np.mean(grad_in, axis=0)
+
+        W = (np.matmul(x[:,:,None],grad_in[:,None,:])).mean(axis=0)
+
+        d_inputs = grad_in * W
 
         ## End
         assert d_inputs.shape == x.shape, "Input: grad shape differs: %s %s" % (d_inputs.shape, x.shape)
         assert dW.shape == self.var["W"].shape, "W: grad shape differs: %s %s" % (dW.shape, self.var["W"].shape)
         assert db.shape == self.var["b"].shape, "b: grad shape differs: %s %s" % (db.shape, self.var["b"].shape)
 
-        self.saved_variables = None
+        self.saved_variables = {
+            "dW": dW,
+            "db": db,
+            "d_inputs": d_inputs
+        }
         updates = {"W": dW,
                    "b": db}
         return Layer.BackwardResult(updates, d_inputs)
@@ -212,13 +238,17 @@ class Sequential(Layer):
 
         refs = {}
         for i, m in enumerate(self.modules):
-            refs.update({"mod_%d.%s" % (i,k): (m.var, k) for k in m.var.keys()})
+            refs.update({"mod_%d.%s" % (i, k): (m.var, k) for k in m.var.keys()})
 
         self.var = self.RefDict(refs)
 
     def forward(self, input: np.ndarray) -> np.ndarray:
         ## Implement
+        # net = Sequential([Linear(5, 8), Tanh(), Linear(8, 3), Tanh()])
 
+        x = input
+        for layer in self.modules:
+            x = layer.forward(x)
         ## End
         return x
 
@@ -229,8 +259,7 @@ class Sequential(Layer):
             module = self.modules[module_index]
 
             ## Implement
-
-            # grads =
+            grads = module.backward(grad_in)
 
             ## End
             grad_in = grads.input_grads
@@ -249,33 +278,55 @@ class CrossEntropy(Loss):
         ## The loss function has to return a single scalar, so we have to take the mean over the batch dimension.
         ## Don't forget to save your variables needed for backward to self.saved_variables.
 
-        # mean_ce =
+        numerator = np.log(Y) * T
+        sum = -np.sum(numerator, axis=1)
+        mean_ce = np.mean(sum)
 
         ## End
+        self.saved_variables = {
+            "Y": Y,
+            "T": T,
+            "n": n,
+        }
         return mean_ce
 
     def backward(self) -> np.ndarray:
         ## Implement
+        T = self.saved_variables["T"]
+        y = self.saved_variables["Y"]
 
-        # d_prediction =
+        d_prediction = -(np.divide(T, y))
 
         ## End
         assert d_prediction.shape == y.shape, "Error shape doesn't match prediction: %d %d" % \
                                               (d_prediction.shape, y.shape)
 
-        self.saved_variables = None
+        self.saved_variables = {
+            "d_prediction": d_prediction
+        }
         return d_prediction
 
 
 def train_one_step(model: Layer, loss: Loss, learning_rate: float, input: np.ndarray, target: np.ndarray) -> float:
     ## Implement
 
+    y = model.forward(input)
+    loss.forward(y, target)
+    variable_gradients = model.backward(loss.backward()).variable_grads
+
+    for layer in model.modules:
+        if isinstance(layer, Linear):
+            layer.var["W"] -= learning_rate * variable_gradients
+
+    loss_value = loss.backward()
     ## End
     return loss_value
 
 
 def create_network() -> Layer:
     ## Implement
+
+    network = Sequential([Linear(2, 50), Tanh(), Linear(50, 30), Tanh(), Linear(30, 2), Softmax()])
 
     ## End
     return network
@@ -309,8 +360,11 @@ def gradient_check():
 
             ## Implement
 
-            # analytic_grad =
-            # numeric_grad =
+            analytic_grad = variable_gradient
+
+            f_x_plus = NN.forward(X + eps)
+            f_x_minus = NN.forward(X - eps)
+            numeric_grad = (f_x_plus - f_x_minus) / 2 * eps
 
             ## End
 
@@ -341,7 +395,7 @@ if __name__ == "__main__":
     plt.ion()
 
 
-    def twospirals(n_points=120, noise=1.6, twist=420):
+    def twospirals(n_points=1, noise=1.6, twist=420):
         """
          Returns a two spirals dataset.
         """
@@ -352,7 +406,7 @@ if __name__ == "__main__":
         X, T = (np.vstack((np.hstack((d1x, d1y)), np.hstack((-d1x, -d1y)))),
                 np.hstack((np.zeros(n_points), np.ones(n_points))))
         T = np.reshape(T, (T.shape[0], 1))
-        T = np.concatenate([T, 1-T], axis=1)
+        T = np.concatenate([T, 1 - T], axis=1)
         return X, T
 
 
@@ -380,19 +434,19 @@ if __name__ == "__main__":
 
 
     def main():
-        print("Checking the network")
-        if not gradient_check():
-            print("Failed. Not training, because your gradients are not good.")
-            return
-        print("Done. Training...")
+        # print("Checking the network")
+        # if not gradient_check():
+        #     print("Failed. Not training, because your gradients are not good.")
+        #     return
+        # print("Done. Training...")
 
-        X, T = twospirals(n_points=200, noise=1.6, twist=600)
+        X, T = twospirals(n_points=2, noise=1.6, twist=600)
         NN = create_network()
         loss = CrossEntropy()
 
         learning_rate = 0.02
 
-        for i in range(20000):
+        for i in range(2):  # 20000
             curr_error = train_one_step(NN, loss, learning_rate, X, T)
             if i % 200 == 0:
                 print("step: ", i, " cost: ", curr_error)
@@ -402,7 +456,6 @@ if __name__ == "__main__":
         print("Done. Close window to quit.")
         plt.ioff()
         plt.show()
-
 
 
     main()
