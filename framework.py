@@ -196,12 +196,10 @@ class Linear(Layer):
         x = self.saved_variables["input"]
         W = self.saved_variables["W"]
 
-        dW = x.T @ W
+        dW = np.einsum('ij, ik -> ijk', x, grad_in).mean(axis=0)
         db = np.mean(grad_in, axis=0)
 
-        W = (np.matmul(x[:,:,None],grad_in[:,None,:])).mean(axis=0)
-
-        d_inputs = grad_in * W
+        d_inputs = grad_in @ W.T
 
         ## End
         assert d_inputs.shape == x.shape, "Input: grad shape differs: %s %s" % (d_inputs.shape, x.shape)
@@ -282,6 +280,8 @@ class CrossEntropy(Loss):
         sum = -np.sum(numerator, axis=1)
         mean_ce = np.mean(sum)
 
+        (np.where(Y==1,-np.log(self.old_x), 0)).sum(axis=1)
+
         ## End
         self.saved_variables = {
             "Y": Y,
@@ -312,13 +312,16 @@ def train_one_step(model: Layer, loss: Loss, learning_rate: float, input: np.nda
 
     y = model.forward(input)
     loss.forward(y, target)
-    variable_gradients = model.backward(loss.backward()).variable_grads
-
-    for layer in model.modules:
-        if isinstance(layer, Linear):
-            layer.var["W"] -= learning_rate * variable_gradients
-
     loss_value = loss.backward()
+    variable_gradients = model.backward(loss_value).variable_grads
+    modules = model.modules
+
+    for layer_index in reversed(range(len(modules))):
+        layer = modules[layer_index]
+        if isinstance(layer, Linear):
+            layer.var["W"] -= learning_rate * variable_gradients[f'mod_{layer_index}.W']
+            layer.var["b"] -= learning_rate * variable_gradients[f'mod_{layer_index}.b']
+
     ## End
     return loss_value
 
@@ -440,7 +443,7 @@ if __name__ == "__main__":
         #     return
         # print("Done. Training...")
 
-        X, T = twospirals(n_points=2, noise=1.6, twist=600)
+        X, T = twospirals(n_points=1, noise=1.6, twist=600)
         NN = create_network()
         loss = CrossEntropy()
 
