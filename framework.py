@@ -117,7 +117,7 @@ class Tanh(Layer):
 
         ## Implement
 
-        d_x = 1 - np.square(tanh_x)
+        d_x = grad_in * (1 - np.square(tanh_x))
 
         ## End
         assert d_x.shape == tanh_x.shape, "Input: grad shape differs: %s %s" % (d_x.shape, tanh_x.shape)
@@ -151,9 +151,6 @@ class Softmax(Layer):
             gradient[i] = grad_in[i] @ jacobian
 
         d_x = gradient
-
-        # row = np.mean(grad_in*softmax, axis=1)[:, None]
-        # proper_d_x = softmax * (grad_in - (grad_in * softmax).sum(axis=1)[:, None])
 
         ## End
         assert d_x.shape == softmax.shape, "Input: grad shape differs: %s %s" % (d_x.shape, softmax.shape)
@@ -206,11 +203,7 @@ class Linear(Layer):
         assert dW.shape == self.var["W"].shape, "W: grad shape differs: %s %s" % (dW.shape, self.var["W"].shape)
         assert db.shape == self.var["b"].shape, "b: grad shape differs: %s %s" % (db.shape, self.var["b"].shape)
 
-        self.saved_variables = {
-            "dW": dW,
-            "db": db,
-            "d_inputs": d_inputs
-        }
+        self.saved_variables = None
         updates = {"W": dW,
                    "b": db}
         return Layer.BackwardResult(updates, d_inputs)
@@ -242,8 +235,6 @@ class Sequential(Layer):
 
     def forward(self, input: np.ndarray) -> np.ndarray:
         ## Implement
-        # net = Sequential([Linear(5, 8), Tanh(), Linear(8, 3), Tanh()])
-
         x = input
         for layer in self.modules:
             x = layer.forward(x)
@@ -280,8 +271,6 @@ class CrossEntropy(Loss):
         sum = -np.sum(numerator, axis=1)
         mean_ce = np.mean(sum)
 
-        (np.where(Y==1,-np.log(self.old_x), 0)).sum(axis=1)
-
         ## End
         self.saved_variables = {
             "Y": Y,
@@ -301,9 +290,7 @@ class CrossEntropy(Loss):
         assert d_prediction.shape == y.shape, "Error shape doesn't match prediction: %d %d" % \
                                               (d_prediction.shape, y.shape)
 
-        self.saved_variables = {
-            "d_prediction": d_prediction
-        }
+        self.saved_variables = None
         return d_prediction
 
 
@@ -311,9 +298,8 @@ def train_one_step(model: Layer, loss: Loss, learning_rate: float, input: np.nda
     ## Implement
 
     y = model.forward(input)
-    loss.forward(y, target)
-    loss_value = loss.backward()
-    variable_gradients = model.backward(loss_value).variable_grads
+    loss_value = loss.forward(y, target)
+    variable_gradients = model.backward(loss.backward()).variable_grads
     modules = model.modules
 
     for layer_index in reversed(range(len(modules))):
@@ -372,7 +358,7 @@ def gradient_check():
             ## End
 
             variable[index] = var_backup
-            if abs(numeric_grad - analytic_grad) > 0.00001:
+            if abs(numeric_grad.reshape(-1) - analytic_grad) > 0.00001:
                 print("[FAIL]: %s: Grad differs: numerical: %f, analytical %f" % (key, numeric_grad, analytic_grad))
                 success = False
                 break
@@ -443,13 +429,13 @@ if __name__ == "__main__":
         #     return
         # print("Done. Training...")
 
-        X, T = twospirals(n_points=1, noise=1.6, twist=600)
+        X, T = twospirals(n_points=120, noise=1.6, twist=600)
         NN = create_network()
         loss = CrossEntropy()
 
         learning_rate = 0.02
 
-        for i in range(2):  # 20000
+        for i in range(20000):
             curr_error = train_one_step(NN, loss, learning_rate, X, T)
             if i % 200 == 0:
                 print("step: ", i, " cost: ", curr_error)
