@@ -115,7 +115,9 @@ model = lib.Sequential([
 # Nothing to do BEFORE this line.
 #######################################################################################################################
 
-indices = np.random.permutation(len(train_validation_set))
+train_set_length = len(train_validation_set)
+validation_set_length = train_set_length - n_train
+indices = np.random.permutation(train_set_length)
 
 ## Implement
 ## Hint: you should split indices to 2 parts: a training and a validation one. Later when loading a batch of data,
@@ -123,13 +125,18 @@ indices = np.random.permutation(len(train_validation_set))
 ## train_validation_set.images[your_indices[i: i+batch_size]] and
 ## train_validation_set.labels[your_indices[i: i+batch_size]]
 
-# train_indices =
-# validation_indices =
+validation_indices = indices[train_set_length-validation_set_length:]
+train_indices = indices[:-validation_set_length]
 
 ## End
 
+
 def verify(images: np.ndarray, targets: np.ndarray) -> Tuple[int, int]:
     ## Implement
+    output = model.forward(images)
+    y = output.argmax(1)
+    total_num = y.size
+    num_ok = (y == targets).sum().item()
     ## End
     return num_ok, total_num
 
@@ -138,9 +145,20 @@ def test() -> float:
     accu = 0.0
     count = 0
 
+    print('Into the test method')
+
     for i in range(0, len(test_set), batch_size):
         images = test_set.images[i:i + batch_size]
         labels = test_set.labels[i:i + batch_size]
+
+        one_hot_labels = get_one_hot_labels(labels)
+
+        loss_value = lib.train_one_step(model, loss, learning_rate, images, one_hot_labels)
+
+        batch_accu, batch_count = verify(images, labels)
+
+        accu += batch_accu
+        count += batch_count
 
         ## Implement. Use the verify() function to verify your data.
         ## End
@@ -153,6 +171,18 @@ def validate() -> float:
     count = 0
 
     ## Implement. Use the verify() function to verify your data.
+    for i in range(0, len(validation_indices), batch_size):
+        images = train_validation_set.images[validation_indices[i: i+batch_size]]
+        labels = train_validation_set.labels[validation_indices[i: i+batch_size]]
+
+        one_hot_labels = get_one_hot_labels(labels)
+
+        loss_value = lib.train_one_step(model, loss, learning_rate, images, one_hot_labels)
+
+        batch_accu, batch_count = verify(images, labels)
+
+        accu += batch_accu
+        count += batch_count
     ## End
 
     return accu/count * 100.0
@@ -163,11 +193,32 @@ def validate() -> float:
 ## better than 0, so it will be updated for sure).
 best_validation_accuracy = 0
 best_epoch = -1
+validation_accuracies = []
 
-for epoch in range(1000):
+def get_one_hot_labels(batch_labels):
+    max_value = 9
+    np_array = np.array(batch_labels)
+    new_labels = np.zeros((np_array.size, max_value + 1))
+    new_labels[np.arange(np_array.size), np_array] = 1
+
+    return new_labels
+
+
+for epoch in range(1000): #1000
     ## Implement
-    # loss_value =
-    # validation_accuracy =
+    batch_loss = 0
+
+    for i in range(0, len(train_indices), batch_size):
+        images = train_validation_set.images[train_indices[i: i+batch_size]]
+        labels = train_validation_set.labels[train_indices[i: i+batch_size]]
+
+        one_hot_labels = get_one_hot_labels(labels)
+
+        batch_loss += lib.train_one_step(model, loss, learning_rate, images, one_hot_labels)
+
+    loss_value = batch_loss / len(train_indices)
+    validation_accuracy = validate()
+    validation_accuracies.append(validation_accuracy)
     ## End
 
     print("Epoch %d: loss: %f, validation accuracy: %.2f%%" % (epoch, loss_value, validation_accuracy))
@@ -176,6 +227,16 @@ for epoch in range(1000):
     ## Hint: you should check if current accuracy is better that the best so far. If it is not, check before how many
     ## iterations ago the best one came, and terminate if it is more than 10. Also update the best_* variables
     ## if needed.
+
+    if validation_accuracy > best_validation_accuracy:
+        best_validation_accuracy = validation_accuracy if validation_accuracy > best_validation_accuracy else best_validation_accuracy
+        best_epoch = epoch
+
+    elif (epoch - best_epoch) > 10:
+        print('Validation accuracy dropping, early stopping...')
+        break
+
+    print("Current best epoch %d, current best validation accuracy: %.2f%%" % (best_epoch, best_validation_accuracy))
 
     # end
 

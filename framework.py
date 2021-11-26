@@ -429,7 +429,7 @@ if __name__ == "__main__":
         #     return
         # print("Done. Training...")
 
-        X, T = twospirals(n_points=120, noise=1.6, twist=600)
+        X, T = twospirals(n_points=200, noise=1.6, twist=600)
         NN = create_network()
         loss = CrossEntropy()
 
